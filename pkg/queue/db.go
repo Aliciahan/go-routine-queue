@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq" // PostgreSQL驱动
+	"github.com/lib/pq" // PostgreSQL驱动
 )
 
 // DBConnector 处理与PostgreSQL的交互
@@ -83,12 +83,19 @@ func (d *DBConnector) InitSchema() error {
 			started_at TIMESTAMP,
 			ended_at TIMESTAMP,
 			error TEXT,
-			worker_id VARCHAR(255),
-			INDEX idx_queue_status (queue_name, status)
+			worker_id VARCHAR(255)
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
+	}
+
+	// 创建索引
+	_, err = d.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_queue_status ON tasks (queue_name, status)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create index on tasks table: %w", err)
 	}
 
 	return nil
@@ -100,6 +107,12 @@ func (d *DBConnector) CreateQueue(name string, workerCount int) error {
 		"INSERT INTO queues (name, worker_count) VALUES ($1, $2)",
 		name, workerCount,
 	)
+	if err != nil {
+		// 检查是否是唯一约束冲突错误
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" { // 23505是PostgreSQL的唯一约束冲突错误码
+			return nil 
+		}
+	}
 	return err
 }
 

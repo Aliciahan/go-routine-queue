@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # PostgreSQL数据库服务
+  postgres:
+    image: postgres:14-alpine
+    container_name: queue_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: queue_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 队列服务器
+  queue-server:
+    build:
+      context: ../..
+      dockerfile: deployment/docker-compose/Dockerfile.server
+    container_name: queue_server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+      DEFAULT_WORKER_COUNT: "5"
+      CLEANUP_INTERVAL: "3600"
+      MONITOR_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+
+  # 示例客户端
+  example-client:
+    build:
+      context: ../..
+      dockerfile: deployment/docker-compose/Dockerfile.client
+    container_name: queue_client
+    depends_on:
+      - queue-server
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+      SERVER_URI: "http://queue-server:8080"
+
+  # # 自定义处理器示例
+  # custom-processor:
+  #   build:
+  #     context: ../..
+  #     dockerfile: deployment/docker-compose/Dockerfile.processor
+  #   container_name: queue_processor
+  #   depends_on:
+  #     - queue-server
+  #   environment:
+  #     DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+
+volumes:
+  postgres_data:

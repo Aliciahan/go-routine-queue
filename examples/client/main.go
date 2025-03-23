@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/Aliciahan/go-routine-queue/pkg/queue"
@@ -12,7 +13,7 @@ import (
 
 func main() {
 	// 连接数据库
-	dbConnStr := "postgres://postgres:postgres@localhost:5432/queue_db?sslmode=disable"
+	dbConnStr := os.Getenv("DB_CONNECTION_STRING")
 	db, err := queue.NewDBConnector(dbConnStr)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -58,7 +59,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// 创建HTTP客户端查询队列状态
-	resp, err := http.Get("http://localhost:8080/api/queues/default")
+	resp, err := http.Get(os.Getenv("SERVER_URI")+"/api/queues/default")
 	if err != nil {
 		log.Fatalf("Failed to get queue status: %v", err)
 	}
@@ -75,7 +76,7 @@ func main() {
 	for status.PendingTasks > 0 {
 		time.Sleep(1 * time.Second)
 
-		resp, err := http.Get("http://localhost:8080/api/queues/default")
+		resp, err := http.Get(os.Getenv("SERVER_URI")+"/api/queues/default")
 		if err != nil {
 			log.Fatalf("Failed to get queue status: %v", err)
 		}

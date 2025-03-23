@@ -1,0 +1,38 @@
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+
+# 复制go.mod和go.sum文件
+COPY go.mod go.sum ./
+
+# 下载依赖
+RUN go mod download
+
+# 复制源代码
+COPY . .
+
+# 编译服务器
+RUN CGO_ENABLED=0 GOOS=linux go build -o queue-server ./cmd/server
+
+# 使用轻量级的alpine镜像
+FROM alpine:latest
+
+WORKDIR /app
+
+# 安装必要的CA证书
+RUN apk --no-cache add ca-certificates
+
+# 从builder阶段复制编译好的二进制文件
+COPY --from=builder /app/queue-server /app/
+
+# 设置环境变量
+ENV DB_CONNECTION_STRING="postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+ENV DEFAULT_WORKER_COUNT="5"
+ENV CLEANUP_INTERVAL="3600"
+ENV MONITOR_ADDR=":8080"
+
+# 暴露端口
+EXPOSE 8080
+
+# 启动服务器
+CMD ["/app/queue-server"]
