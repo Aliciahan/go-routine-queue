@@ -13,6 +13,15 @@ import (
 	"github.com/Aliciahan/go-routine-queue/pkg/queue"
 )
 
+// getEnv 获取环境变量，如果不存在则返回默认值
+func getEnv(key, defaultValue string) string {
+	value, exists := os.LookupEnv(key)
+	if !exists {
+		return defaultValue
+	}
+	return value
+}
+
 // 自定义任务处理器
 type CustomTaskProcessor struct {
 	Name string
@@ -164,4 +173,17 @@ func main() {
 	// 等待中断信号
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// 等待信号
+	sig := <-sigCh
+	log.Printf("Received signal: %v, shutting down...", sig)
+
+	// 停止队列管理器
+	qm.Stop()
+
+	// 等待一段时间确保所有任务都能完成
+	log.Println("Waiting for all tasks to complete...")
+	time.Sleep(2 * time.Second)
+
+	log.Println("Shutdown complete")
 }
