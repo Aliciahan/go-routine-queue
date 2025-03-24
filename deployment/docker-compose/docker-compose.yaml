@@ -21,9 +21,11 @@ services:
 
   # 队列服务器
   queue-server:
-    build:
-      context: ../..
-      dockerfile: deployment/docker-compose/Dockerfile.server
+    image: golang:1.23-alpine
+    working_dir: /app
+    command: sh -c "go run examples/server/main.go"
+    volumes:
+      - "../..:/app"
     container_name: queue_server
     depends_on:
       postgres:
@@ -38,26 +40,30 @@ services:
 
   # 示例客户端
   example-client:
-    build:
-      context: ../..
-      dockerfile: deployment/docker-compose/Dockerfile.client
+    image: golang:1.23-alpine
     container_name: queue_client
+    working_dir: /app
+    command: sh -c "go run examples/client/main.go"
+    volumes:
+      - "../..:/app"
     depends_on:
       - queue-server
     environment:
       DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
       SERVER_URI: "http://queue-server:8080"
 
-  # # 自定义处理器示例
-  # custom-processor:
-  #   build:
-  #     context: ../..
-  #     dockerfile: deployment/docker-compose/Dockerfile.processor
-  #   container_name: queue_processor
-  #   depends_on:
-  #     - queue-server
-  #   environment:
-  #     DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+  # 自定义处理器示例
+  custom-processor:
+    image: golang:1.23-alpine
+    command: sh -c "go run examples/custom_processor/main.go"
+    working_dir: /app
+    volumes:
+      - "../..:/app"
+    container_name: queue_processor
+    depends_on:
+      - queue-server
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
 
 volumes:
   postgres_data:
