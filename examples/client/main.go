@@ -29,7 +29,7 @@ func main() {
 	}
 
 	// 创建10个示例任务
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		payload := TaskPayload{
 			ID:      fmt.Sprintf("task-%d", i),
 			Name:    fmt.Sprintf("Example Task %d", i),
@@ -44,8 +44,11 @@ func main() {
 			continue
 		}
 
+		// 创建队列管理器
+		//qm := queue.NewQueueManager(db, fmt.Sprintf("client-%d", time.Now().UnixNano()))
+
 		// 将任务加入队列
-		taskID, err := db.EnqueueTask("fast_queue", payloadBytes)
+		taskID, err := db.EnqueueTask("default", payloadBytes)
 		if err != nil {
 			log.Printf("Failed to enqueue task: %v", err)
 			continue
@@ -59,7 +62,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// 创建HTTP客户端查询队列状态
-	resp, err := http.Get(os.Getenv("SERVER_URI")+"/api/queues/default")
+	resp, err := http.Get(os.Getenv("SERVER_URI") + "/api/queues/default")
 	if err != nil {
 		log.Fatalf("Failed to get queue status: %v", err)
 	}
@@ -76,7 +79,7 @@ func main() {
 	for status.PendingTasks > 0 {
 		time.Sleep(1 * time.Second)
 
-		resp, err := http.Get(os.Getenv("SERVER_URI")+"/api/queues/default")
+		resp, err := http.Get(os.Getenv("SERVER_URI") + "/api/queues/default")
 		if err != nil {
 			log.Fatalf("Failed to get queue status: %v", err)
 		}

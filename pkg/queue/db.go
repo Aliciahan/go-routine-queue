@@ -86,7 +86,7 @@ func (d *DBConnector) InitSchema() error {
 			ended_at TIMESTAMP,
 			error TEXT,
 			worker_id VARCHAR(255),
-			instance_id VARCHAR(255)
+			instance_id VARCHAR(255) 
 		)
 	`)
 	if err != nil {
