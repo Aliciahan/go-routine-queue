@@ -110,6 +110,7 @@ func (d *DBConnector) CreateQueue(name string, workerCount int) error {
 	if err != nil {
 		// 检查是否是唯一约束冲突错误
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" { // 23505是PostgreSQL的唯一约束冲突错误码
+			fmt.Println("Queue already exists: ", name)
 			return nil 
 		}
 	}
