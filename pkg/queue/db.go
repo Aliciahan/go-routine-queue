@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lib/pq" // PostgreSQL驱动
@@ -24,16 +25,17 @@ type Queue struct {
 
 // Task 表示队列中的任务
 type Task struct {
-	ID        int64
-	QueueName string
-	Payload   []byte
-	Status    string // pending, processing, completed, failed
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	StartedAt *time.Time
-	EndedAt   *time.Time
-	Error     string
-	WorkerID  string
+	ID         int64
+	QueueName  string
+	Payload    []byte
+	Status     string // pending, processing, completed, failed
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	StartedAt  *time.Time
+	EndedAt    *time.Time
+	Error      string
+	WorkerID   string
+	InstanceID string
 }
 
 // NewDBConnector 创建一个新的数据库连接器
@@ -83,7 +85,8 @@ func (d *DBConnector) InitSchema() error {
 			started_at TIMESTAMP,
 			ended_at TIMESTAMP,
 			error TEXT,
-			worker_id VARCHAR(255)
+			worker_id VARCHAR(255),
+			instance_id VARCHAR(255)
 		)
 	`)
 	if err != nil {
@@ -111,7 +114,7 @@ func (d *DBConnector) CreateQueue(name string, workerCount int) error {
 		// 检查是否是唯一约束冲突错误
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" { // 23505是PostgreSQL的唯一约束冲突错误码
 			fmt.Println("Queue already exists: ", name)
-			return nil 
+			return nil
 		}
 	}
 	return err
@@ -204,6 +207,12 @@ func (d *DBConnector) EnqueueTask(queueName string, payload []byte) (int64, erro
 
 // DequeueTask 从队列中获取一个待处理的任务
 func (d *DBConnector) DequeueTask(ctx context.Context, queueName, workerID string) (*Task, error) {
+	// 从workerID中提取实例ID（格式：instanceID-queueName-timestamp）
+	parts := strings.Split(workerID, "-")
+	instanceID := ""
+	if len(parts) >= 2 {
+		instanceID = parts[0]
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -233,8 +242,8 @@ func (d *DBConnector) DequeueTask(ctx context.Context, queueName, workerID strin
 	// 更新任务状态为处理中
 	_, err = tx.ExecContext(
 		ctx,
-		"UPDATE tasks SET status = 'processing', worker_id = $1, started_at = $2, updated_at = $2 WHERE id = $3",
-		workerID, now, task.ID,
+		"UPDATE tasks SET status = 'processing', worker_id = $1, instance_id = $2, started_at = $3, updated_at = $3 WHERE id = $4",
+		workerID, instanceID, now, task.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -247,6 +256,7 @@ func (d *DBConnector) DequeueTask(ctx context.Context, queueName, workerID strin
 
 	task.Status = "processing"
 	task.WorkerID = workerID
+	task.InstanceID = instanceID
 	task.StartedAt = &now
 	task.UpdatedAt = now
 

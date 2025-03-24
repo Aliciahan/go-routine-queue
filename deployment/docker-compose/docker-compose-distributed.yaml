@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL数据库服务
+  postgres:
+    image: postgres:14-alpine
+    container_name: queue_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: queue_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 队列服务器（主实例）
+  queue-server:
+    build:
+      context: ../..
+      dockerfile: deployment/docker-compose/Dockerfile.server
+    container_name: queue_server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+      DEFAULT_WORKER_COUNT: "0"  # 主实例不启动worker
+      CLEANUP_INTERVAL: "3600"
+      MONITOR_ADDR: ":8080"
+      INSTANCE_ID: "server-main"
+      INSTANCE_ROLE: "server"
+    ports:
+      - "8080:8080"
+
+  # Worker实例1
+  worker-1:
+    build:
+      context: ../..
+      dockerfile: deployment/docker-compose/Dockerfile.server
+    container_name: queue_worker_1
+    depends_on:
+      - queue-server
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+      DEFAULT_WORKER_COUNT: "0"  # 由协调器动态分配
+      CLEANUP_INTERVAL: "3600"
+      MONITOR_ADDR: ":8081"
+      INSTANCE_ID: "worker-1"
+      INSTANCE_ROLE: "worker"
+    ports:
+      - "8081:8081"
+
+  # Worker实例2
+  worker-2:
+    build:
+      context: ../..
+      dockerfile: deployment/docker-compose/Dockerfile.server
+    container_name: queue_worker_2
+    depends_on:
+      - queue-server
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+      DEFAULT_WORKER_COUNT: "0"  # 由协调器动态分配
+      CLEANUP_INTERVAL: "3600"
+      MONITOR_ADDR: ":8082"
+      INSTANCE_ID: "worker-2"
+      INSTANCE_ROLE: "worker"
+    ports:
+      - "8082:8082"
+
+  # 示例客户端
+  example-client:
+    build:
+      context: ../..
+      dockerfile: deployment/docker-compose/Dockerfile.client
+    container_name: queue_client
+    depends_on:
+      - queue-server
+    environment:
+      DB_CONNECTION_STRING: "postgres://postgres:postgres@postgres:5432/queue_db?sslmode=disable"
+      SERVER_URI: "http://queue-server:8080"
+
+volumes:
+  postgres_data:

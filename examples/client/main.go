@@ -45,7 +45,7 @@ func main() {
 		}
 
 		// 将任务加入队列
-		taskID, err := db.EnqueueTask("default", payloadBytes)
+		taskID, err := db.EnqueueTask("fast_queue", payloadBytes)
 		if err != nil {
 			log.Printf("Failed to enqueue task: %v", err)
 			continue

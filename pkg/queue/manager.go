@@ -16,10 +16,11 @@ type QueueManager struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	processorRegistry *TaskProcessorRegistry
+	instanceID        string // 实例ID
 }
 
 // NewQueueManager 创建一个新的队列管理器
-func NewQueueManager(db *DBConnector) *QueueManager {
+func NewQueueManager(db *DBConnector, instanceID string) *QueueManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &QueueManager{
 		db:                db,
@@ -29,6 +30,7 @@ func NewQueueManager(db *DBConnector) *QueueManager {
 		ctx:               ctx,
 		cancel:            cancel,
 		processorRegistry: NewTaskProcessorRegistry(),
+		instanceID:        instanceID,
 	}
 }
 
@@ -81,7 +83,7 @@ func (qm *QueueManager) CreateQueue(queueName string, workerCount int) error {
 	}
 
 	// 创建工作器池
-	pool := NewWorkerPool(qm.db, queueName, workerCount)
+	pool := NewWorkerPool(qm.db, queueName, workerCount, qm.instanceID)
 
 	// 设置任务处理器
 	processor := qm.processorRegistry.GetProcessor(queueName)

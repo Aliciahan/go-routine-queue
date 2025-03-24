@@ -12,14 +12,16 @@ import (
 type Monitor struct {
 	queueManager *QueueManager
 	db           *DBConnector
+	coordinator  *WorkerCoordinator
 	server       *http.Server
 }
 
 // NewMonitor 创建一个新的监控接口
-func NewMonitor(qm *QueueManager, db *DBConnector) *Monitor {
+func NewMonitor(qm *QueueManager, db *DBConnector, coordinator *WorkerCoordinator) *Monitor {
 	return &Monitor{
 		queueManager: qm,
 		db:           db,
+		coordinator:  coordinator,
 	}
 }
 
@@ -31,6 +33,8 @@ func (m *Monitor) Start(addr string) error {
 	mux.HandleFunc("/api/queues", m.handleGetAllQueues)
 	mux.HandleFunc("/api/queues/", m.handleQueueOperations)
 	mux.HandleFunc("/api/stats", m.handleGetStats)
+	mux.HandleFunc("/api/workers", m.handleGetWorkers)
+	mux.HandleFunc("/api/workers/", m.handleWorkerOperations)
 	mux.HandleFunc("/health", m.handleHealth)
 
 	// 创建HTTP服务器
@@ -212,14 +216,83 @@ func (m *Monitor) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 检查数据库连接
-	if err := m.db.db.Ping(); err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"status": "unhealthy", "reason": "database connection failed"})
+	// 简单的健康检查
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+// handleGetWorkers 处理获取所有worker实例的请求
+func (m *Monitor) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 返回健康状态
+	// 获取所有worker实例
+	instances, err := m.coordinator.GetWorkerInstanceStatus()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get worker instances: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回JSON响应
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	json.NewEncoder(w).Encode(instances)
+}
+
+// handleWorkerOperations 处理单个worker实例的操作
+func (m *Monitor) handleWorkerOperations(w http.ResponseWriter, r *http.Request) {
+	// 解析队列名称
+	queueName := r.URL.Path[len("/api/workers/"):]
+	if queueName == "" {
+		http.Error(w, "Queue name is required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// 获取队列的全局worker数量
+		totalCount, err := m.coordinator.GetTotalWorkerCount(queueName)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get worker count: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"queue_name":    queueName,
+			"total_workers": totalCount,
+		})
+
+	case http.MethodPut:
+		// 更新队列的全局worker数量
+		var data struct {
+			MaxWorkers int `json:"max_workers"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if data.MaxWorkers < 0 {
+			http.Error(w, "Worker count must be non-negative", http.StatusBadRequest)
+			return
+		}
+
+		if err := m.coordinator.SetGlobalWorkerCount(queueName, data.MaxWorkers); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to update worker count: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"queue_name":  queueName,
+			"max_workers": data.MaxWorkers,
+			"status":      "updated",
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
