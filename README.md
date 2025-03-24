@@ -176,6 +176,8 @@ func main() {
 
 ### 监控API
 
+#### 队列管理
+
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/queues` | GET | 获取所有队列状态 |
@@ -183,6 +185,24 @@ func main() {
 | `/api/queues/{queue_name}` | POST | 创建新队列 |
 | `/api/queues/{queue_name}` | PUT | 更新队列配置 |
 | `/api/queues/{queue_name}` | DELETE | 删除队列 |
+
+#### 实例管理
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/instances` | GET | 获取所有活跃实例信息，包括当前实例ID |
+
+#### Worker分配
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/worker-allocations` | GET | 获取所有队列的worker分配情况 |
+| `/api/worker-allocations?queue={queue_name}` | GET | 获取指定队列的worker分配情况 |
+
+#### 系统信息
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
 | `/api/stats` | GET | 获取系统统计信息 |
 | `/health` | GET | 健康检查 |
 
@@ -194,6 +214,56 @@ func main() {
 | `DEFAULT_WORKER_COUNT` | 默认worker数量 | `5` |
 | `CLEANUP_INTERVAL` | 清理间隔时间(秒) | `3600` |
 | `MONITOR_ADDR` | 监控服务器地址 | `:8080` |
+
+## 多实例部署
+
+系统支持多实例部署，每个实例拥有唯一的实例ID，可以通过环境变量`INSTANCE_ID`指定，如果不指定则自动生成。多实例部署时，系统会自动在各实例间分配worker，确保资源的高效利用。
+
+### 实例ID
+
+```bash
+# 设置实例ID
+export INSTANCE_ID="instance-1"
+```
+
+如果不设置，系统会基于主机名和时间戳自动生成唯一的实例ID：
+
+```go
+// 生成唯一的实例ID
+func generateInstanceID() string {
+    hostname, err := os.Hostname()
+    if err != nil {
+        hostname = "unknown"
+    }
+    return fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+}
+```
+
+### Worker分配机制
+
+系统会根据活跃实例数量和队列配置的总worker数量，自动计算每个实例应分配的worker数量，并在实例启动、关闭或心跳超时时自动重新平衡worker分配。
+
+可以通过API监控不同实例上的worker分配情况：
+
+```bash
+# 获取所有队列的worker分配情况
+curl http://localhost:8080/api/worker-allocations
+
+# 获取指定队列的worker分配情况
+curl http://localhost:8080/api/worker-allocations?queue=default
+```
+
+响应示例：
+
+```json
+{
+  "queue": "default",
+  "allocations": {
+    "instance-1": 3,
+    "instance-2": 2
+  }
+}
+```
 
 ## 性能优化
 
