@@ -18,6 +18,7 @@ func main() {
 	defaultWorkerCount, _ := strconv.Atoi(getEnv("DEFAULT_WORKER_COUNT", "5"))
 	cleanupIntervalSec, _ := strconv.Atoi(getEnv("CLEANUP_INTERVAL", "3600"))
 	monitorAddr := getEnv("MONITOR_ADDR", ":8080")
+	instanceID := getEnv("INSTANCE_ID", generateInstanceID())
 
 	// 连接数据库
 	db, err := queue.NewDBConnector(dbConnStr)
@@ -32,7 +33,7 @@ func main() {
 	}
 
 	// 创建队列管理器
-	qm := queue.NewQueueManager(db)
+	qm := queue.NewQueueManager(db, instanceID)
 	qm.SetCleanupInterval(time.Duration(cleanupIntervalSec) * time.Second)
 
 	// 启动队列管理器
@@ -78,4 +79,16 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// generateInstanceID 生成唯一的实例ID
+func generateInstanceID() string {
+	// 使用主机名和时间戳生成唯一ID
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	// 格式：hostname-timestamp
+	return fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
 }

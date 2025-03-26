@@ -31,6 +31,8 @@ func (m *Monitor) Start(addr string) error {
 	mux.HandleFunc("/api/queues", m.handleGetAllQueues)
 	mux.HandleFunc("/api/queues/", m.handleQueueOperations)
 	mux.HandleFunc("/api/stats", m.handleGetStats)
+	mux.HandleFunc("/api/instances", m.handleGetInstances)
+	mux.HandleFunc("/api/worker-allocations", m.handleGetWorkerAllocations)
 	mux.HandleFunc("/health", m.handleHealth)
 
 	// 创建HTTP服务器
@@ -212,14 +214,76 @@ func (m *Monitor) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 检查数据库连接
-	if err := m.db.db.Ping(); err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"status": "unhealthy", "reason": "database connection failed"})
+	// 简单的健康检查，返回200 OK
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+// handleGetInstances 处理获取所有实例的请求
+func (m *Monitor) handleGetInstances(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 返回健康状态
+	// 获取活跃实例
+	activeInstances, err := m.db.GetActiveInstances(time.Now().Add(-30 * time.Second))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get active instances: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回JSON响应
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"active_instances": activeInstances,
+		"current_instance": m.queueManager.GetInstanceID(),
+	})
+}
+
+// handleGetWorkerAllocations 处理获取worker分配的请求
+func (m *Monitor) handleGetWorkerAllocations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 获取队列名称参数
+	queueName := r.URL.Query().Get("queue")
+	if queueName == "" {
+		// 如果没有指定队列，返回所有队列的分配情况
+		queues, err := m.db.GetAllQueues()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get queues: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		allAllocations := make(map[string]map[string]int)
+		for _, q := range queues {
+			allocations, err := m.db.GetQueueWorkerAllocations(q.Name)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to get worker allocations: %v", err), http.StatusInternalServerError)
+				return
+			}
+			allAllocations[q.Name] = allocations
+		}
+
+		// 返回JSON响应
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(allAllocations)
+	} else {
+		// 获取指定队列的worker分配
+		allocations, err := m.db.GetQueueWorkerAllocations(queueName)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get worker allocations: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// 返回JSON响应
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"queue": queueName,
+			"allocations": allocations,
+		})
+	}
 }

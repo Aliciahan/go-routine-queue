@@ -73,7 +73,7 @@ func main() {
 	}
 
 	// 创建队列管理器
-	qm := queue.NewQueueManager(db)
+	qm := queue.NewQueueManager(db, "custom_processor_instance")
 
 	// 注册自定义任务处理器
 	qm.RegisterTaskProcessor("fast_queue", &CustomTaskProcessor{Name: "FastProcessor"})

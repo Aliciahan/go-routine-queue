@@ -19,10 +19,12 @@ type WorkerPool struct {
 	processTimeout time.Duration
 	pollInterval   time.Duration
 	processor      TaskProcessor
+	instanceID     string    // 实例ID，用于标识worker所属的实例
+	lastHeartbeat  time.Time // 最后一次心跳时间
 }
 
 // NewWorkerPool 创建一个新的工作器池
-func NewWorkerPool(db *DBConnector, queueName string, workerCount int) *WorkerPool {
+func NewWorkerPool(db *DBConnector, queueName string, workerCount int, instanceID string) *WorkerPool {
 	return &WorkerPool{
 		db:             db,
 		queueName:      queueName,
@@ -33,6 +35,8 @@ func NewWorkerPool(db *DBConnector, queueName string, workerCount int) *WorkerPo
 		processTimeout: 5 * time.Minute,         // 默认任务处理超时时间
 		pollInterval:   1 * time.Second,         // 默认轮询间隔
 		processor:      &DefaultTaskProcessor{}, // 默认使用默认处理器
+		instanceID:     instanceID,              // 实例ID
+		lastHeartbeat:  time.Now(),              // 初始化心跳时间
 	}
 }
 
@@ -222,4 +226,23 @@ func (wp *WorkerPool) SetProcessor(processor TaskProcessor) {
 		// 如果传入nil，使用默认处理器
 		wp.processor = &DefaultTaskProcessor{}
 	}
+}
+
+// UpdateHeartbeat 更新工作器池的心跳时间
+func (wp *WorkerPool) UpdateHeartbeat() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+	wp.lastHeartbeat = time.Now()
+}
+
+// GetInstanceID 获取工作器池的实例ID
+func (wp *WorkerPool) GetInstanceID() string {
+	return wp.instanceID
+}
+
+// GetLastHeartbeat 获取工作器池的最后心跳时间
+func (wp *WorkerPool) GetLastHeartbeat() time.Time {
+	wp.mu.RLock()
+	defer wp.mu.RUnlock()
+	return wp.lastHeartbeat
 }

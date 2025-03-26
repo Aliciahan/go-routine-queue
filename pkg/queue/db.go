@@ -98,6 +98,37 @@ func (d *DBConnector) InitSchema() error {
 		return fmt.Errorf("failed to create index on tasks table: %w", err)
 	}
 
+	// 创建实例表
+	_, err = d.db.Exec(`
+		CREATE TABLE IF NOT EXISTS instances (
+			id VARCHAR(255) PRIMARY KEY,
+			hostname VARCHAR(255) NOT NULL,
+			last_heartbeat TIMESTAMP NOT NULL DEFAULT NOW(),
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			status VARCHAR(50) NOT NULL DEFAULT 'active'
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create instances table: %w", err)
+	}
+
+	// 创建worker分配表
+	_, err = d.db.Exec(`
+		CREATE TABLE IF NOT EXISTS worker_allocations (
+			id SERIAL PRIMARY KEY,
+			queue_name VARCHAR(255) NOT NULL REFERENCES queues(name),
+			instance_id VARCHAR(255) NOT NULL REFERENCES instances(id),
+			worker_count INT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			UNIQUE(queue_name, instance_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create worker_allocations table: %w", err)
+	}
+
 	return nil
 }
 
@@ -111,7 +142,7 @@ func (d *DBConnector) CreateQueue(name string, workerCount int) error {
 		// 检查是否是唯一约束冲突错误
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" { // 23505是PostgreSQL的唯一约束冲突错误码
 			fmt.Println("Queue already exists: ", name)
-			return nil 
+			return nil
 		}
 	}
 	return err
@@ -308,4 +339,150 @@ func (d *DBConnector) ResetStaleTasks(threshold time.Time) (int64, error) {
 	}
 
 	return result.RowsAffected()
+}
+
+// RegisterInstance 注册一个新的实例
+func (d *DBConnector) RegisterInstance(instanceID, hostname string) error {
+	_, err := d.db.Exec(
+		"INSERT INTO instances (id, hostname) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET hostname = $2, last_heartbeat = NOW(), updated_at = NOW(), status = 'active'",
+		instanceID, hostname,
+	)
+	return err
+}
+
+// UpdateInstanceHeartbeat 更新实例的心跳时间
+func (d *DBConnector) UpdateInstanceHeartbeat(instanceID string) error {
+	_, err := d.db.Exec(
+		"UPDATE instances SET last_heartbeat = NOW(), updated_at = NOW() WHERE id = $1",
+		instanceID,
+	)
+	return err
+}
+
+// GetActiveInstances 获取所有活跃的实例
+func (d *DBConnector) GetActiveInstances(threshold time.Time) ([]string, error) {
+	rows, err := d.db.Query(
+		"SELECT id FROM instances WHERE last_heartbeat > $1 AND status = 'active'",
+		threshold,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var instances []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		instances = append(instances, id)
+	}
+
+	return instances, nil
+}
+
+// MarkInstanceInactive 将实例标记为非活跃
+func (d *DBConnector) MarkInstanceInactive(instanceID string) error {
+	_, err := d.db.Exec(
+		"UPDATE instances SET status = 'inactive', updated_at = NOW() WHERE id = $1",
+		instanceID,
+	)
+	return err
+}
+
+// AllocateWorkers 为实例分配worker
+func (d *DBConnector) AllocateWorkers(queueName, instanceID string, workerCount int) error {
+	_, err := d.db.Exec(
+		"INSERT INTO worker_allocations (queue_name, instance_id, worker_count) VALUES ($1, $2, $3) ON CONFLICT (queue_name, instance_id) DO UPDATE SET worker_count = $3, updated_at = NOW()",
+		queueName, instanceID, workerCount,
+	)
+	return err
+}
+
+// GetWorkerAllocation 获取实例的worker分配
+func (d *DBConnector) GetWorkerAllocation(queueName, instanceID string) (int, error) {
+	var workerCount int
+	err := d.db.QueryRow(
+		"SELECT worker_count FROM worker_allocations WHERE queue_name = $1 AND instance_id = $2",
+		queueName, instanceID,
+	).Scan(&workerCount)
+
+	if err == sql.ErrNoRows {
+		return 0, nil // 没有分配worker
+	} else if err != nil {
+		return 0, err
+	}
+
+	return workerCount, nil
+}
+
+// GetQueueWorkerAllocations 获取队列的所有worker分配
+func (d *DBConnector) GetQueueWorkerAllocations(queueName string) (map[string]int, error) {
+	rows, err := d.db.Query(
+		"SELECT instance_id, worker_count FROM worker_allocations WHERE queue_name = $1",
+		queueName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	allocations := make(map[string]int)
+	for rows.Next() {
+		var instanceID string
+		var workerCount int
+		if err := rows.Scan(&instanceID, &workerCount); err != nil {
+			return nil, err
+		}
+		allocations[instanceID] = workerCount
+	}
+
+	return allocations, nil
+}
+
+// RebalanceWorkers 重新平衡队列的worker分配
+func (d *DBConnector) RebalanceWorkers(queueName string, activeInstances []string, totalWorkerCount int) error {
+	// 开始事务
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 清除非活跃实例的分配
+	_, err = tx.Exec(
+		"DELETE FROM worker_allocations WHERE queue_name = $1 AND instance_id NOT IN (SELECT unnest($2::varchar[]))",
+		queueName, pq.Array(activeInstances),
+	)
+	if err != nil {
+		return err
+	}
+
+	// 计算每个实例应分配的worker数量
+	instanceCount := len(activeInstances)
+	if instanceCount == 0 {
+		return nil // 没有活跃的实例
+	}
+
+	baseWorkerCount := totalWorkerCount / instanceCount
+	extraWorkers := totalWorkerCount % instanceCount
+
+	// 为每个实例分配worker
+	for i, instanceID := range activeInstances {
+		workerCount := baseWorkerCount
+		if i < extraWorkers {
+			workerCount++ // 分配额外的worker
+		}
+
+		_, err = tx.Exec(
+			"INSERT INTO worker_allocations (queue_name, instance_id, worker_count) VALUES ($1, $2, $3) ON CONFLICT (queue_name, instance_id) DO UPDATE SET worker_count = $3, updated_at = NOW()",
+			queueName, instanceID, workerCount,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
